@@ -25,6 +25,7 @@ local LocalPlayer = Players.LocalPlayer
 local Settings = {
     ESP = {
         Enabled = false,
+        SelfESP = false,
         TeamCheck = false,
         VisibleCheck = false,
         SpawnDelay = 0.5,
@@ -431,6 +432,7 @@ SelfChamsToggle:AddColorPicker('SelfChamsWeapColor', { Default = Color3.fromRGB(
 
 -- ESP Controls
 ESPGroup:AddToggle('ESPEnabled', { Text = 'Enable ESP', Default = false, Callback = function(v) Settings.ESP.Enabled = v end })
+ESPGroup:AddToggle('ESPSelfESP', { Text = 'Self ESP', Default = false, Callback = function(v) Settings.ESP.SelfESP = v end })
 ESPGroup:AddToggle('ESPTeamCheck', { Text = 'Team Check', Default = false, Callback = function(v) Settings.ESP.TeamCheck = v end })
 ESPGroup:AddToggle('ESPVisCheck', { Text = 'Visible Check', Default = false, Callback = function(v) Settings.ESP.VisibleCheck = v end })
 ESPGroup:AddSlider('ESPMaxDistance', { Text = 'Render Distance', Default = 1000, Min = 100, Max = 5000, Rounding = 0, Callback = function(v) Settings.ESP.MaxDistance = v end })
@@ -1275,7 +1277,7 @@ UpdateNPCList = function()
         if isPathEnabled then
             local children = path.Instance:GetChildren()
             for _, child in ipairs(children) do
-                if child:IsA("Model") and not playerChars[child] then
+                if child:IsA("Model") and child ~= LocalPlayer.Character and not playerChars[child] then
                     local humanoid = child:FindFirstChildOfClass("Humanoid")
                     local rootPart = child:FindFirstChild("HumanoidRootPart") or child.PrimaryPart
                     
@@ -1681,6 +1683,12 @@ local function UpdateCrosshair()
     end
 end
 
+local function SetVisible(drawing, val)
+    if drawing and drawing.Visible ~= val then
+        drawing.Visible = val
+    end
+end
+
 local function RenderESPObject(character, rootPart, humanoid, displayName, realName, weaponName, data, config, passedTeamCheck, passedVisCheck, passedSpawnCheck)
     local shouldRender2D = false
 
@@ -1941,93 +1949,163 @@ local function RenderESPObject(character, rootPart, humanoid, displayName, realN
     end
 
     if not shouldRender2D then
-        data.Box2D.Visible = false
-        data.Box2DOutline.Visible = false
-        data.BoxFill.Visible = false
-        data.Name.Visible = false
-        data.Distance.Visible = false
-        data.Weapon.Visible = false
-        data.HealthBg.Visible = false
-        data.HealthFg.Visible = false
+        SetVisible(data.Box2D, false)
+        SetVisible(data.Box2DOutline, false)
+        SetVisible(data.BoxFill, false)
+        SetVisible(data.Name, false)
+        SetVisible(data.Distance, false)
+        SetVisible(data.Weapon, false)
+        SetVisible(data.HealthBg, false)
+        SetVisible(data.HealthFg, false)
         for i = 1, 14 do
-            if data.SkeletonLines[i] then data.SkeletonLines[i].Visible = false end
-            if data.SkeletonOutlineLines[i] then data.SkeletonOutlineLines[i].Visible = false end
+            SetVisible(data.SkeletonLines[i], false)
+            SetVisible(data.SkeletonOutlineLines[i], false)
         end
     end
 end
 
 local function UpdateESP()
     local espSettings = Settings.ESP
-    for player, data in pairs(Drawings.Players) do
-        local character = player.Character
-        local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-        local humanoid = character and character:FindFirstChild("Humanoid")
+    local playerEspActive = espSettings.Boxes.Enabled or 
+                            espSettings.Healthbar.Enabled or 
+                            espSettings.Skeleton.Enabled or 
+                            espSettings.Names.Enabled or 
+                            espSettings.Distance.Enabled or 
+                            espSettings.Weapon.Enabled or 
+                            espSettings.Highlight.Enabled
 
-        if character then
-            if data.Character ~= character then
-                data.Character = character
-                data.SpawnTime = tick()
-                if data.Highlight then data.Highlight:Destroy() data.Highlight = nil end
+    if playerEspActive then
+        for player, data in pairs(Drawings.Players) do
+            if player == LocalPlayer and not espSettings.SelfESP then
+                SetVisible(data.Box2D, false)
+                SetVisible(data.Box2DOutline, false)
+                SetVisible(data.BoxFill, false)
+                SetVisible(data.Name, false)
+                SetVisible(data.Distance, false)
+                SetVisible(data.Weapon, false)
+                SetVisible(data.HealthBg, false)
+                SetVisible(data.HealthFg, false)
+                if data.Highlight then data.Highlight.Enabled = false end
+                for i = 1, 14 do
+                    SetVisible(data.SkeletonLines[i], false)
+                    SetVisible(data.SkeletonOutlineLines[i], false)
+                end
+                continue
+            end
+
+            local character = player.Character
+            local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+            local humanoid = character and character:FindFirstChild("Humanoid")
+
+            if character then
+                if data.Character ~= character then
+                    data.Character = character
+                    data.SpawnTime = tick()
+                    if data.Highlight then data.Highlight:Destroy() data.Highlight = nil end
+                end
+            end
+
+            local passedTeamCheck = not espSettings.TeamCheck or (player.Team ~= LocalPlayer.Team)
+            local passedVisCheck = not espSettings.VisibleCheck or IsVisible(rootPart, character)
+            local passedSpawnCheck = (tick() - data.SpawnTime) >= espSettings.SpawnDelay
+            
+            local displayName = espSettings.Names.UseDisplayName and player.DisplayName or player.Name
+            local tool = character and character:FindFirstChildOfClass("Tool")
+            local weaponName = tool and tool.Name or "None"
+
+            RenderESPObject(character, rootPart, humanoid, displayName, player.Name, weaponName, data, espSettings, passedTeamCheck, passedVisCheck, passedSpawnCheck)
+        end
+    else
+        for player, data in pairs(Drawings.Players) do
+            SetVisible(data.Box2D, false)
+            SetVisible(data.Box2DOutline, false)
+            SetVisible(data.BoxFill, false)
+            SetVisible(data.Name, false)
+            SetVisible(data.Distance, false)
+            SetVisible(data.Weapon, false)
+            SetVisible(data.HealthBg, false)
+            SetVisible(data.HealthFg, false)
+            if data.Highlight then data.Highlight.Enabled = false end
+            for i = 1, 14 do
+                SetVisible(data.SkeletonLines[i], false)
+                SetVisible(data.SkeletonOutlineLines[i], false)
             end
         end
-
-        local passedTeamCheck = not espSettings.TeamCheck or (player.Team ~= LocalPlayer.Team)
-        local passedVisCheck = not espSettings.VisibleCheck or IsVisible(rootPart, character)
-        local passedSpawnCheck = (tick() - data.SpawnTime) >= espSettings.SpawnDelay
-        
-        local displayName = espSettings.Names.UseDisplayName and player.DisplayName or player.Name
-        local tool = character and character:FindFirstChildOfClass("Tool")
-        local weaponName = tool and tool.Name or "None"
-
-        RenderESPObject(character, rootPart, humanoid, displayName, player.Name, weaponName, data, espSettings, passedTeamCheck, passedVisCheck, passedSpawnCheck)
     end
 
     local npcSettings = Settings.NPC.ESP
+    local npcEspActive = npcSettings.Boxes.Enabled or 
+                         npcSettings.Healthbar.Enabled or 
+                         npcSettings.Skeleton.Enabled or 
+                         npcSettings.Names.Enabled or 
+                         npcSettings.Distance.Enabled or 
+                         npcSettings.Weapon.Enabled or 
+                         npcSettings.Highlight.Enabled
+
     if Toggles.NPCsEnabled and Toggles.NPCsEnabled.Value then
-        for model, info in pairs(npcModels) do
-            local data = Drawings.NPCs[model]
-            if data then
-                local character = model
-                local rootPart = info.RootPart
-                local humanoid = info.Humanoid
+        if npcEspActive then
+            for model, info in pairs(npcModels) do
+                local data = Drawings.NPCs[model]
+                if data then
+                    local character = model
+                    local rootPart = info.RootPart
+                    local humanoid = info.Humanoid
 
-                if character then
-                    if data.Character ~= character then
-                        data.Character = character
-                        data.SpawnTime = tick()
-                        if data.Highlight then data.Highlight:Destroy() data.Highlight = nil end
+                    if character then
+                        if data.Character ~= character then
+                            data.Character = character
+                            data.SpawnTime = tick()
+                            if data.Highlight then data.Highlight:Destroy() data.Highlight = nil end
+                        end
                     end
-                end
 
-                local passedTeamCheck = true
-                if Toggles.NPCTeamCheck and Toggles.NPCTeamCheck.Value then
-                    local npcTeam = character:FindFirstChild("Team")
-                    if npcTeam then
-                        passedTeamCheck = npcTeam.Value ~= LocalPlayer.Team
+                    local passedTeamCheck = true
+                    if Toggles.NPCTeamCheck and Toggles.NPCTeamCheck.Value then
+                        local npcTeam = character:FindFirstChild("Team")
+                        if npcTeam then
+                            passedTeamCheck = npcTeam.Value ~= LocalPlayer.Team
+                        end
                     end
+
+                    local passedVisCheck = not Toggles.NPCVisibleCheck or not Toggles.NPCVisibleCheck.Value or IsVisible(rootPart, character)
+                    local passedSpawnCheck = (tick() - data.SpawnTime) >= npcSettings.SpawnDelay
+                    
+                    local weaponName = GetWeapon(character)
+
+                    RenderESPObject(character, rootPart, humanoid, character.Name, character.Name, weaponName, data, npcSettings, passedTeamCheck, passedVisCheck, passedSpawnCheck)
                 end
-
-                local passedVisCheck = not Toggles.NPCVisibleCheck or not Toggles.NPCVisibleCheck.Value or IsVisible(rootPart, character)
-                local passedSpawnCheck = (tick() - data.SpawnTime) >= npcSettings.SpawnDelay
-                
-                local weaponName = GetWeapon(character)
-
-                RenderESPObject(character, rootPart, humanoid, character.Name, character.Name, weaponName, data, npcSettings, passedTeamCheck, passedVisCheck, passedSpawnCheck)
+            end
+        else
+            for model, data in pairs(Drawings.NPCs) do
+                SetVisible(data.Box2D, false)
+                SetVisible(data.Box2DOutline, false)
+                SetVisible(data.BoxFill, false)
+                SetVisible(data.Name, false)
+                SetVisible(data.Distance, false)
+                SetVisible(data.Weapon, false)
+                SetVisible(data.HealthBg, false)
+                SetVisible(data.HealthFg, false)
+                if data.Highlight then data.Highlight.Enabled = false end
+                for i = 1, 14 do
+                    SetVisible(data.SkeletonLines[i], false)
+                    SetVisible(data.SkeletonOutlineLines[i], false)
+                end
             end
         end
     else
         for model, data in pairs(Drawings.NPCs) do
-            data.Box2D.Visible = false
-            data.Box2DOutline.Visible = false
-            data.BoxFill.Visible = false
-            data.Name.Visible = false
-            data.Distance.Visible = false
-            data.Weapon.Visible = false
-            data.HealthBg.Visible = false
-            data.HealthFg.Visible = false
+            SetVisible(data.Box2D, false)
+            SetVisible(data.Box2DOutline, false)
+            SetVisible(data.BoxFill, false)
+            SetVisible(data.Name, false)
+            SetVisible(data.Distance, false)
+            SetVisible(data.Weapon, false)
+            SetVisible(data.HealthBg, false)
+            SetVisible(data.HealthFg, false)
+            if data.Highlight then data.Highlight.Enabled = false end
             for i = 1, 14 do
-                if data.SkeletonLines[i] then data.SkeletonLines[i].Visible = false end
-                if data.SkeletonOutlineLines[i] then data.SkeletonOutlineLines[i].Visible = false end
+                SetVisible(data.SkeletonLines[i], false)
+                SetVisible(data.SkeletonOutlineLines[i], false)
             end
         end
     end
@@ -3034,7 +3112,8 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(deltaTime)
         end
         
         if currentTarget and currentTargetPart then
-            local isVisibleToShoot = Toggles.VisibleCheck.Value and IsVisible(currentTargetPart, currentTarget.Character) or not Toggles.VisibleCheck.Value
+            local targetChar = currentTarget:IsA("Player") and currentTarget.Character or currentTarget
+            local isVisibleToShoot = Toggles.VisibleCheck.Value and IsVisible(currentTargetPart, targetChar) or not Toggles.VisibleCheck.Value
             if isVisibleToShoot then
                 local aimPos = currentTargetPart.Position
                 if Toggles.EnableDistanceComp.Value then aimPos = aimPos + Vector3.new(0, (Camera.CFrame.Position - currentTargetPart.Position).Magnitude * Options.DistanceMultiplier.Value, 0) end
