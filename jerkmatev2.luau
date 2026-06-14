@@ -161,6 +161,70 @@ local Settings = {
             GradientMoving = false,
             GradientSpeed = 1
         }
+    },
+    NPC = {
+        Enabled = false,
+        Aimbot = false,
+        SilentAim = false,
+        HBE = false,
+        HitboxSize = 2,
+        HitboxPart = "Head",
+        TargetAll = true,
+        TargetGroups = {},
+        VisibleCheck = true,
+        TeamCheck = false,
+        HealthCheck = true,
+        ESP = {
+            Enabled = false,
+            MaxDistance = 1000,
+            SpawnDelay = 0,
+            Highlight = {
+                Enabled = false,
+                FillColor = Color3.fromRGB(255, 170, 0),
+                FillTransparency = 0.5,
+                OutlineColor = Color3.fromRGB(255, 255, 255),
+                OutlineTransparency = 0
+            },
+            Boxes = {
+                Enabled = false,
+                Transparency = 0.2,
+                Thickness = 1,
+                Fill = false,
+                FillTransparency = 0.2,
+                GradientLerp = 1.0,
+                GradientColor1 = Color3.fromRGB(255, 170, 0),
+                GradientColor2 = Color3.fromRGB(255, 255, 255),
+                GradientColor3 = Color3.fromRGB(255, 255, 255),
+                GradientRotation = 90,
+                GradientMoving = false,
+                GradientSpeed = 1.0
+            },
+            Healthbar = {
+                Enabled = false,
+                Transparency = 0.2,
+                Thickness = 1,
+                GradientLerp = 1.0,
+                GradientColor1 = Color3.fromRGB(0, 255, 0),
+                GradientColor2 = Color3.fromRGB(255, 255, 255),
+                GradientColor3 = Color3.fromRGB(255, 255, 255),
+                GradientRotation = 90
+            },
+            Skeleton = {
+                Enabled = false,
+                Transparency = 0.2,
+                Thickness = 1,
+                GradientLerp = 1.0,
+                GradientColor1 = Color3.fromRGB(255, 255, 255),
+                GradientColor2 = Color3.fromRGB(255, 255, 255),
+                GradientColor3 = Color3.fromRGB(255, 255, 255),
+                GradientRotation = 90,
+                GradientMoving = false,
+                GradientSpeed = 1.0
+            },
+            Names = { Enabled = false, Size = 13, Color = Color3.fromRGB(255, 255, 255), Transparency = 1 },
+            Weapon = { Enabled = false, Size = 13, Color = Color3.fromRGB(200, 200, 200), Transparency = 1 },
+            Distance = { Enabled = false, Size = 13, Color = Color3.fromRGB(255, 255, 255), Transparency = 1 }
+        }
     }
 }
 
@@ -177,8 +241,31 @@ local Drawings = {
         CloneModel = nil,
         Highlight = nil
     },
-    Players = {}
+    Players = {},
+    NPCs = {}
 }
+
+local OriginalHitboxProperties = {}
+local npcPaths = {}
+local npcModels = {}
+local ScannedFoldersList = { "Workspace" }
+local ScanNPCPaths
+local UpdateNPCList
+
+local function RestoreAndRemoveTargetHBE(target)
+    if OriginalHitboxProperties[target] then
+        local parts = OriginalHitboxProperties[target]
+        for part, orig in pairs(parts) do
+            if part and part.Parent then
+                part.Size = orig.Size
+                part.Transparency = orig.Transparency
+                part.CanCollide = orig.CanCollide
+                part.Massless = orig.Massless
+            end
+        end
+        OriginalHitboxProperties[target] = nil
+    end
+end
 
 local R15Bones = {
     {"Head", "UpperTorso"},
@@ -239,6 +326,7 @@ local Tabs = {
     Visuals = Window:AddTab('Visuals'),
     Desync = Window:AddTab('Desync'),
     HBE = Window:AddTab('HBE'),
+    NPCs = Window:AddTab('NPCs'),
     Misc = Window:AddTab('Misc'),
     ['UI Settings'] = Window:AddTab('UI Settings')
 }
@@ -590,11 +678,15 @@ HBEIgnoreGroup:AddDropdown('HBEIgnorePlayers', { Text = 'Players', SpecialType =
 HBEIgnoreGroup:AddToggle('HBEIgnoreSelectedTeams', { Text = 'Ignore Selected Teams', Default = false })
 HBEIgnoreGroup:AddDropdown('HBEIgnoreTeams', { Text = 'Teams', SpecialType = 'Team', Multi = true, Default = {} })
 
--- Core HBE Cleanup Memory
-local OriginalHitboxProperties = {}
 local function DisableHBE()
-    for player, parts in pairs(OriginalHitboxProperties) do
-        if player and player.Character then
+    for target, parts in pairs(OriginalHitboxProperties) do
+        local character
+        if target and target.ClassName == "Player" then
+            character = target.Character
+        else
+            character = target
+        end
+        if character then
             for part, orig in pairs(parts) do
                 if part and part.Parent then
                     if part.Size ~= orig.Size then part.Size = orig.Size end
@@ -612,6 +704,123 @@ table.insert(Connections, Players.PlayerRemoving:Connect(function(player)
         OriginalHitboxProperties[player] = nil
     end
 end))
+
+-- ==========================================
+-- NPC TAB LOGIC
+-- ==========================================
+local NPCsMainGroup = Tabs.NPCs:AddLeftGroupbox('NPC Scanning & Targeting')
+local NPCHBEGroup = Tabs.NPCs:AddLeftGroupbox('NPC Hitbox Expander')
+local NPCESPGroup = Tabs.NPCs:AddRightGroupbox('NPC ESP & Visuals')
+
+NPCsMainGroup:AddToggle('NPCsEnabled', { Text = 'Enable NPC System', Default = false })
+NPCsMainGroup:AddToggle('NPCTeamCheck', { Text = 'NPC Team Check', Default = false })
+NPCsMainGroup:AddToggle('NPCVisibleCheck', { Text = 'NPC Visible Check', Default = false })
+NPCsMainGroup:AddToggle('NPCTargetAimAssist', { Text = 'NPC Aim Assist Target', Default = false })
+NPCsMainGroup:AddToggle('NPCTargetSilentAim', { Text = 'NPC Silent Aim Target', Default = false })
+
+local function UpdateNPCDropdown()
+    if Options.NPCSearchPaths then
+        Options.NPCSearchPaths:SetValues(ScannedFoldersList)
+    end
+end
+
+NPCsMainGroup:AddDropdown('NPCSearchPaths', {
+    Text = 'Scanned Folder Paths',
+    AllowNull = true,
+    Multi = true,
+    Values = ScannedFoldersList,
+    Default = { 'Workspace' }
+})
+
+NPCsMainGroup:AddButton('Rescan Directories', function()
+    ScanNPCPaths()
+    UpdateNPCDropdown()
+    Library:Notify('Rescanned Workspace directories!', 3)
+end)
+
+-- NPCSearchPaths changed hook
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if Options.NPCSearchPaths then
+            local selected = Options.NPCSearchPaths.Value
+            if selected then
+                -- Convert keys to list of folders
+                local folders = {}
+                for f, active in pairs(selected) do
+                    if active then table.insert(folders, f) end
+                end
+                Settings.NPC.Folders = folders
+            end
+        end
+    end
+end)
+
+NPCHBEGroup:AddToggle('NPCHBEToggle', { Text = 'Enable NPC HBE', Default = false })
+NPCHBEGroup:AddToggle('NPCHBECollisions', { Text = 'NPC HBE Collisions', Default = false })
+NPCHBEGroup:AddSlider('NPCHBESize', { Text = 'NPC Hitbox Size', Default = 5, Min = 2, Max = 100, Rounding = 0 })
+NPCHBEGroup:AddSlider('NPCHBETransparency', { Text = 'NPC HBE Transparency', Default = 0.5, Min = 0, Max = 1, Rounding = 2 })
+NPCHBEGroup:AddInput('NPCHBECustomPartName', { Text = 'Custom Part Name', Default = 'HeadHB' })
+NPCHBEGroup:AddDropdown('NPCHBEParts', {
+    Text = 'Body Parts',
+    AllowNull = true,
+    Multi = true,
+    Values = { 'Custom Part', 'Head', 'RootPart', 'Torso', 'Left Arm', 'Right Arm', 'Left Leg', 'Right Leg' },
+    Default = {'RootPart'}
+})
+
+local NPCBoxToggle = NPCESPGroup:AddToggle('NPCESPBoxesEnabled', { Text = 'Draw Boxes', Default = false, Callback = function(v) Settings.NPC.ESP.Boxes.Enabled = v end })
+NPCBoxToggle:AddColorPicker('NPCBoxGrad1Color', { Default = Color3.fromRGB(255, 170, 0), Transparency = 0.2, Title = 'Gradient Color 1', Callback = function(Color) Settings.NPC.ESP.Boxes.GradientColor1 = Color; Settings.NPC.ESP.Boxes.Transparency = GetAlpha('NPCBoxGrad1Color') end })
+NPCBoxToggle:AddColorPicker('NPCBoxGrad2Color', { Default = Color3.fromRGB(255, 255, 255), Transparency = 0.2, Title = 'Gradient Color 2', Callback = function(Color) Settings.NPC.ESP.Boxes.GradientColor2 = Color end })
+NPCBoxToggle:AddColorPicker('NPCBoxGrad3Color', { Default = Color3.fromRGB(255, 255, 255), Transparency = 0.2, Title = 'Gradient Color 3', Callback = function(Color) Settings.NPC.ESP.Boxes.GradientColor3 = Color end })
+
+NPCESPGroup:AddSlider('NPCBoxThickness', { Text = 'Box Thickness', Default = 1, Min = 1, Max = 5, Rounding = 0, Compact = true, Callback = function(v) Settings.NPC.ESP.Boxes.Thickness = v end })
+NPCESPGroup:AddToggle('NPCESPBoxesFill', { Text = 'Box Fill', Default = false, Callback = function(v) Settings.NPC.ESP.Boxes.Fill = v end })
+NPCESPGroup:AddSlider('NPCBoxGradLerp', { Text = 'Gradient Lerp', Default = 1, Min = 0, Max = 1, Rounding = 2, Compact = true, Callback = function(v) Settings.NPC.ESP.Boxes.GradientLerp = v end })
+NPCESPGroup:AddToggle('NPCBoxGradMoving', { Text = 'Moving Rotation', Default = false, Callback = function(v) Settings.NPC.ESP.Boxes.GradientMoving = v end })
+NPCESPGroup:AddSlider('NPCBoxGradSpeed', { Text = 'Rotation Speed', Default = 1, Min = 0.1, Max = 10, Rounding = 1, Compact = true, Callback = function(v) Settings.NPC.ESP.Boxes.GradientSpeed = v end })
+NPCESPGroup:AddSlider('NPCBoxGradRotation', { Text = 'Gradient Rotation', Default = 90, Min = 0, Max = 360, Rounding = 0, Compact = true, Callback = function(v) Settings.NPC.ESP.Boxes.GradientRotation = v end })
+
+local NPCESPHealthToggle = NPCESPGroup:AddToggle('NPCESPHealth', { Text = 'Draw Health', Default = false, Callback = function(v) Settings.NPC.ESP.Healthbar.Enabled = v end })
+NPCESPHealthToggle:AddColorPicker('NPCHealthGrad1Color', { Default = Color3.fromRGB(0, 255, 0), Transparency = 0.2, Title = 'Gradient Color 1', Callback = function(Color) Settings.NPC.ESP.Healthbar.GradientColor1 = Color; Settings.NPC.ESP.Healthbar.Transparency = GetAlpha('NPCHealthGrad1Color') end })
+NPCESPHealthToggle:AddColorPicker('NPCHealthGrad2Color', { Default = Color3.fromRGB(255, 255, 255), Transparency = 0.2, Title = 'Gradient Color 2', Callback = function(Color) Settings.NPC.ESP.Healthbar.GradientColor2 = Color end })
+NPCESPHealthToggle:AddColorPicker('NPCHealthGrad3Color', { Default = Color3.fromRGB(255, 255, 255), Transparency = 0.2, Title = 'Gradient Color 3', Callback = function(Color) Settings.NPC.ESP.Healthbar.GradientColor3 = Color end })
+
+NPCESPGroup:AddSlider('NPCHealthGradLerp', { Text = 'Gradient Lerp', Default = 1, Min = 0, Max = 1, Rounding = 2, Compact = true, Callback = function(v) Settings.NPC.ESP.Healthbar.GradientLerp = v end })
+NPCESPGroup:AddSlider('NPCHealthGradRotation', { Text = 'Gradient Rotation', Default = 90, Min = 0, Max = 360, Rounding = 0, Compact = true, Callback = function(v) Settings.NPC.ESP.Healthbar.GradientRotation = v end })
+
+local NPCESPSkeletonToggle = NPCESPGroup:AddToggle('NPCESPSkeleton', { Text = 'Draw Skeleton', Default = false, Callback = function(v) Settings.NPC.ESP.Skeleton.Enabled = v end })
+NPCESPSkeletonToggle:AddColorPicker('NPCSkeletonGrad1Color', { Default = Color3.fromRGB(255, 255, 255), Transparency = 0.2, Title = 'Gradient Color 1', Callback = function(Color) Settings.NPC.ESP.Skeleton.GradientColor1 = Color; Settings.NPC.ESP.Skeleton.Transparency = GetAlpha('NPCSkeletonGrad1Color') end })
+NPCESPSkeletonToggle:AddColorPicker('NPCSkeletonGrad2Color', { Default = Color3.fromRGB(255, 255, 255), Transparency = 0.2, Title = 'Gradient Color 2', Callback = function(Color) Settings.NPC.ESP.Skeleton.GradientColor2 = Color end })
+NPCESPSkeletonToggle:AddColorPicker('NPCSkeletonGrad3Color', { Default = Color3.fromRGB(255, 255, 255), Transparency = 0.2, Title = 'Gradient Color 3', Callback = function(Color) Settings.NPC.ESP.Skeleton.GradientColor3 = Color end })
+
+NPCESPGroup:AddSlider('NPCSkeletonThickness', { Text = 'Skeleton Thickness', Default = 1, Min = 1, Max = 5, Rounding = 0, Compact = true, Callback = function(v) Settings.NPC.ESP.Skeleton.Thickness = v end })
+NPCESPGroup:AddSlider('NPCSkeletonGradLerp', { Text = 'Gradient Lerp', Default = 1, Min = 0, Max = 1, Rounding = 2, Compact = true, Callback = function(v) Settings.NPC.ESP.Skeleton.GradientLerp = v end })
+NPCESPGroup:AddToggle('NPCSkeletonGradMoving', { Text = 'Moving Rotation', Default = false, Callback = function(v) Settings.NPC.ESP.Skeleton.GradientMoving = v end })
+NPCESPGroup:AddSlider('NPCSkeletonGradSpeed', { Text = 'Rotation Speed', Default = 1, Min = 0.1, Max = 10, Rounding = 1, Compact = true, Callback = function(v) Settings.NPC.ESP.Skeleton.GradientSpeed = v end })
+NPCESPGroup:AddSlider('NPCSkeletonGradRotation', { Text = 'Gradient Rotation', Default = 90, Min = 0, Max = 360, Rounding = 0, Compact = true, Callback = function(v) Settings.NPC.ESP.Skeleton.GradientRotation = v end })
+
+NPCESPGroup:AddToggle('NPCESPName', { Text = 'Draw Name', Default = false, Callback = function(v) Settings.NPC.ESP.Names.Enabled = v end }):AddColorPicker('NPCNameColor', { Default = Color3.fromRGB(255, 255, 255), Transparency = 0, Title = 'NPC Name Color', Callback = function(Color) Settings.NPC.ESP.Names.Color = Color; Settings.NPC.ESP.Names.Transparency = GetAlpha('NPCNameColor') end })
+NPCESPGroup:AddToggle('NPCESPWeapon', { Text = 'Draw Weapon', Default = false, Callback = function(v) Settings.NPC.ESP.Weapon.Enabled = v end }):AddColorPicker('NPCWeaponColor', { Default = Color3.fromRGB(200, 200, 200), Transparency = 0, Title = 'NPC Weapon Color', Callback = function(Color) Settings.NPC.ESP.Weapon.Color = Color; Settings.NPC.ESP.Weapon.Transparency = GetAlpha('NPCWeaponColor') end })
+NPCESPGroup:AddToggle('NPCESPDistance', { Text = 'Draw Distance', Default = false, Callback = function(v) Settings.NPC.ESP.Distance.Enabled = v end }):AddColorPicker('NPCDistanceColor', { Default = Color3.fromRGB(255, 255, 255), Transparency = 0, Title = 'NPC Distance Color', Callback = function(Color) Settings.NPC.ESP.Distance.Color = Color; Settings.NPC.ESP.Distance.Transparency = GetAlpha('NPCDistanceColor') end })
+
+local NPCHighlightGroup = Tabs.NPCs:AddRightGroupbox('NPC Highlights')
+local NPCHighlightToggle = NPCHighlightGroup:AddToggle('NPCHighlightToggle', { Text = 'Enable Highlights', Default = false, Callback = function(v) Settings.NPC.ESP.Highlight.Enabled = v end })
+NPCHighlightToggle:AddColorPicker('NPCHighlightFill', { Default = Color3.fromRGB(255, 170, 0), Title = 'Fill Color', Transparency = 0.5 })
+NPCHighlightToggle:AddColorPicker('NPCHighlightOut', { Default = Color3.fromRGB(255, 255, 255), Title = 'Outline Color', Transparency = 0 })
+
+-- Safe Live Updates for NPC ESP Highlights
+task.spawn(function()
+    repeat task.wait() until Options and Options.NPCHighlightFill and Options.NPCHighlightOut
+    Options.NPCHighlightFill:OnChanged(function()
+        Settings.NPC.ESP.Highlight.FillColor = Options.NPCHighlightFill.Value
+        Settings.NPC.ESP.Highlight.FillTransparency = Options.NPCHighlightFill.Transparency or 0.5
+    end)
+    Options.NPCHighlightOut:OnChanged(function()
+        Settings.NPC.ESP.Highlight.OutlineColor = Options.NPCHighlightOut.Value
+        Settings.NPC.ESP.Highlight.OutlineTransparency = Options.NPCHighlightOut.Transparency or 0
+    end)
+end)
 
 -- ==========================================
 -- MISC TAB LOGIC
@@ -761,15 +970,38 @@ local function IsVisible(targetPart, playerCharacter)
     return result and result.Instance and result.Instance:IsDescendantOf(playerCharacter) or not result
 end
 
-local function IsTargetValid(player, part)
-    if not player or not part or not player.Character or not part.Parent then return false end
-    if Toggles.HealthCheck.Value and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health <= 0 then return false end
-    if Toggles.TeamCheck.Value and player.Team == LocalPlayer.Team then return false end
+local function IsTargetValid(playerOrModel, part)
+    if not playerOrModel or not part or not part.Parent then return false end
+    
+    local character
+    local isPlayer = playerOrModel:IsA("Player")
+    if isPlayer then
+        character = playerOrModel.Character
+    else
+        character = playerOrModel
+    end
+    
+    if not character then return false end
+    
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if Toggles.HealthCheck.Value and humanoid and humanoid.Health <= 0 then return false end
+    
+    if isPlayer then
+        if Toggles.TeamCheck.Value and playerOrModel.Team == LocalPlayer.Team then return false end
+    else
+        if Toggles.TeamCheck.Value and Toggles.NPCTeamCheck and Toggles.NPCTeamCheck.Value then
+            local npcTeam = character:FindFirstChild("Team")
+            if npcTeam then
+                if npcTeam.Value == LocalPlayer.Team then return false end
+            end
+        end
+    end
+    
     return true
 end
 
 local function GetClosestTarget()
-    local closestPlayer, closestPart, shortestDistance = nil, nil, math.huge
+    local closestTarget, closestPart, shortestDistance = nil, nil, math.huge
     local mousePos = UserInputService:GetMouseLocation()
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Humanoid") then
@@ -784,14 +1016,44 @@ local function GetClosestTarget()
                         if onScreen then
                             local distance = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
                             if Toggles.EnableFOV.Value and distance > Options.FOVRadius.Value then continue end
-                            if distance < shortestDistance then closestPlayer, closestPart, shortestDistance = player, part, distance end
+                            if distance < shortestDistance then closestTarget, closestPart, shortestDistance = player, part, distance end
                         end
                     end
                 end
             end
         end
     end
-    return closestPlayer, closestPart
+    
+    if Toggles.NPCsEnabled and Toggles.NPCsEnabled.Value and Toggles.NPCTargetAimAssist and Toggles.NPCTargetAimAssist.Value then
+        for model, info in pairs(npcModels) do
+            local character = model
+            local humanoid = info.Humanoid
+            local rootPart = info.RootPart
+            if rootPart and character and (not humanoid or humanoid.Health > 0) then
+                if Toggles.TeamCheck.Value and Toggles.NPCTeamCheck and Toggles.NPCTeamCheck.Value then
+                    local npcTeam = character:FindFirstChild("Team")
+                    if npcTeam and npcTeam.Value == LocalPlayer.Team then continue end
+                end
+
+                for partName, isSelected in pairs(Options.TargetParts.Value) do
+                    if isSelected then
+                        local part = character:FindFirstChild(partName) or (partName == "RootPart" and rootPart)
+                        if part then
+                            if Toggles.VisibleCheck.Value and not IsVisible(part, character) then continue end
+                            local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                            if onScreen then
+                                local distance = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+                                if Toggles.EnableFOV.Value and distance > Options.FOVRadius.Value then continue end
+                                if distance < shortestDistance then closestTarget, closestPart, shortestDistance = character, part, distance end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return closestTarget, closestPart
 end
 
 local function GetCrosshairCenter()
@@ -853,12 +1115,203 @@ local function RemovePlayer(player)
         end
         Drawings.Players[player] = nil
     end
+    RestoreAndRemoveTargetHBE(player)
 end
 
 table.insert(Connections, Players.PlayerAdded:Connect(AddPlayer))
 table.insert(Connections, Players.PlayerRemoving:Connect(RemovePlayer))
 
 for _, p in ipairs(Players:GetPlayers()) do AddPlayer(p) end
+
+
+
+local function GetPlayerCharacters()
+    local chars = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then
+            chars[player.Character] = true
+        end
+    end
+    return chars
+end
+
+ScanNPCPaths = function()
+    local playerChars = GetPlayerCharacters()
+    local workspaceChildren = Workspace:GetChildren()
+    
+    local wsHasNPCs = false
+    for _, child in ipairs(workspaceChildren) do
+        if child:IsA("Model") and not playerChars[child] then
+            local hum = child:FindFirstChildOfClass("Humanoid")
+            local hrp = child:FindFirstChild("HumanoidRootPart")
+            if hum or hrp then
+                wsHasNPCs = true
+                break
+            end
+        end
+    end
+    
+    local paths = {}
+    if wsHasNPCs then
+        table.insert(paths, { Name = "Workspace", Instance = Workspace })
+    end
+    
+    for _, child in ipairs(workspaceChildren) do
+        if child:IsA("Folder") then
+            local folderHasNPCs = false
+            for _, subChild in ipairs(child:GetChildren()) do
+                if subChild:IsA("Model") and not playerChars[subChild] then
+                    local hum = subChild:FindFirstChildOfClass("Humanoid")
+                    local hrp = subChild:FindFirstChild("HumanoidRootPart")
+                    if hum or hrp then
+                        folderHasNPCs = true
+                        break
+                    end
+                end
+            end
+            if folderHasNPCs then
+                table.insert(paths, { Name = child.Name, Instance = child })
+            end
+        end
+    end
+    
+    for _, descendant in ipairs(Workspace:GetDescendants()) do
+        if descendant:IsA("Humanoid") or descendant.Name == "HumanoidRootPart" then
+            local pModel = descendant.Parent
+            if pModel and pModel:IsA("Model") and not playerChars[pModel] then
+                local folder = pModel.Parent
+                if folder and folder:IsA("Folder") and folder ~= Workspace then
+                    local alreadyAdded = false
+                    for _, p in ipairs(paths) do
+                        if p.Instance == folder then
+                            alreadyAdded = true
+                            break
+                        end
+                    end
+                    if not alreadyAdded then
+                        table.insert(paths, { Name = folder.Name, Instance = folder })
+                    end
+                end
+            end
+        end
+    end
+    
+    npcPaths = paths
+    
+    local folderNames = {}
+    for _, path in ipairs(paths) do
+        table.insert(folderNames, path.Name)
+    end
+    ScannedFoldersList = folderNames
+end
+
+local function GetWeapon(model)
+    local tool = model:FindFirstChildOfClass("Tool")
+    if tool then
+        return tool.Name
+    end
+    for _, child in ipairs(model:GetChildren()) do
+        if child:IsA("Model") and (child.Name:lower():find("gun") or child.Name:lower():find("weapon") or child.Name:lower():find("sword")) then
+            return child.Name
+        end
+    end
+    return "None"
+end
+
+local function RemoveNPC(model)
+    if Drawings.NPCs[model] then
+        local d = Drawings.NPCs[model]
+        d.Box2D:Remove()
+        d.Box2DOutline:Remove()
+        d.BoxFill:Remove()
+        d.Name:Remove()
+        d.Distance:Remove()
+        d.Weapon:Remove()
+        d.HealthBg:Remove()
+        d.HealthFg:Remove()
+        if d.Highlight then d.Highlight:Destroy() end
+        for _, tbl in ipairs({d.SkeletonLines, d.SkeletonOutlineLines}) do
+            for _, l in ipairs(tbl) do l:Remove() end
+        end
+        Drawings.NPCs[model] = nil
+    end
+    RestoreAndRemoveTargetHBE(model)
+    npcModels[model] = nil
+end
+
+UpdateNPCList = function()
+    if not Toggles.NPCsEnabled or not Toggles.NPCsEnabled.Value then
+        for model in pairs(Drawings.NPCs) do
+            RemoveNPC(model)
+        end
+        return
+    end
+
+    local playerChars = GetPlayerCharacters()
+    local activeModels = {}
+    
+    local dropdownValues = {}
+    for _, path in ipairs(npcPaths) do
+        table.insert(dropdownValues, path.Name)
+    end
+    if Options.NPCSearchPaths then
+        local currentValues = Options.NPCSearchPaths.Values
+        local valuesChanged = #currentValues ~= #dropdownValues
+        if not valuesChanged then
+            for i, v in ipairs(dropdownValues) do
+                if currentValues[i] ~= v then
+                    valuesChanged = true
+                    break
+                end
+            end
+        end
+        if valuesChanged then
+            Options.NPCSearchPaths:SetValues(dropdownValues)
+        end
+    end
+
+    for _, path in ipairs(npcPaths) do
+        local isPathEnabled = Options.NPCSearchPaths and Options.NPCSearchPaths.Value and Options.NPCSearchPaths.Value[path.Name]
+        if isPathEnabled then
+            local children = path.Instance:GetChildren()
+            for _, child in ipairs(children) do
+                if child:IsA("Model") and not playerChars[child] then
+                    local humanoid = child:FindFirstChildOfClass("Humanoid")
+                    local rootPart = child:FindFirstChild("HumanoidRootPart") or child.PrimaryPart
+                    
+                    if rootPart then
+                        activeModels[child] = {
+                            Humanoid = humanoid,
+                            RootPart = rootPart,
+                            PathName = path.Name
+                        }
+                    end
+                end
+            end
+        end
+    end
+
+    for model, info in pairs(activeModels) do
+        if not Drawings.NPCs[model] then
+            Drawings.NPCs[model] = CreateESPData()
+            Drawings.NPCs[model].SpawnTime = tick()
+        end
+        npcModels[model] = info
+    end
+
+    for model in pairs(Drawings.NPCs) do
+        if not activeModels[model] or not model.Parent then
+            RemoveNPC(model)
+        end
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        pcall(UpdateNPCList)
+    end
+end)
 
 -- ==========================================
 -- VISUALS RENDERING LOOPS
@@ -1228,7 +1681,364 @@ local function UpdateCrosshair()
     end
 end
 
+local function RenderESPObject(character, rootPart, humanoid, displayName, realName, weaponName, data, config, passedTeamCheck, passedVisCheck, passedSpawnCheck)
+    local shouldRender2D = false
+
+    if rootPart and humanoid and humanoid.Health > 0 then
+        if passedTeamCheck and passedVisCheck and passedSpawnCheck then
+            -- Highlight (Chams)
+            if config.Highlight and config.Highlight.Enabled then
+                if not data.Highlight then
+                    data.Highlight = Instance.new("Highlight")
+                    data.Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    data.Highlight.Parent = character
+                end
+                data.Highlight.Adornee = character
+                data.Highlight.FillColor = config.Highlight.FillColor
+                data.Highlight.FillTransparency = config.Highlight.FillTransparency
+                data.Highlight.OutlineColor = config.Highlight.OutlineColor
+                data.Highlight.OutlineTransparency = config.Highlight.OutlineTransparency
+                data.Highlight.Enabled = true
+            else
+                if data.Highlight then data.Highlight.Enabled = false end
+            end
+
+            local _, onScreen = Camera:WorldToViewportPoint(rootPart.Position)
+            local dist = (Camera.CFrame.Position - rootPart.Position).Magnitude
+
+            if onScreen and dist <= config.MaxDistance then
+                local has2D = (config.Boxes and config.Boxes.Enabled) or 
+                              (config.Healthbar and config.Healthbar.Enabled) or 
+                              (config.Names and config.Names.Enabled) or 
+                              (config.Distance and config.Distance.Enabled) or 
+                              (config.Weapon and config.Weapon.Enabled)
+
+                if has2D then
+                    shouldRender2D = true
+                    local cf, size3D = character:GetBoundingBox()
+                    local cornersVectors = {
+                        Vector3.new(size3D.X/2, size3D.Y/2, size3D.Z/2), Vector3.new(-size3D.X/2, size3D.Y/2, size3D.Z/2),
+                        Vector3.new(-size3D.X/2, -size3D.Y/2, size3D.Z/2), Vector3.new(size3D.X/2, -size3D.Y/2, size3D.Z/2),
+                        Vector3.new(size3D.X/2, size3D.Y/2, -size3D.Z/2), Vector3.new(-size3D.X/2, size3D.Y/2, -size3D.Z/2),
+                        Vector3.new(-size3D.X/2, -size3D.Y/2, -size3D.Z/2), Vector3.new(size3D.X/2, -size3D.Y/2, -size3D.Z/2)
+                    }
+
+                    local c2d = {}
+                    local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
+                    for i, v in ipairs(cornersVectors) do
+                        local pt = Camera:WorldToViewportPoint(cf * v)
+                        c2d[i] = Vector2.new(pt.X, pt.Y)
+                        if pt.X < minX then minX = pt.X end if pt.X > maxX then maxX = pt.X end
+                        if pt.Y < minY then minY = pt.Y end if pt.Y > maxY then maxY = pt.Y end
+                    end
+
+                    local width, height = maxX - minX, maxY - minY
+                    local boxPos, boxSize = Vector2.new(minX, minY), Vector2.new(width, height)
+
+                    -- 1. BOX RENDERER
+                    if config.Boxes and config.Boxes.Enabled then
+                        data.Box2D.Visible = true
+                        data.Box2D.Size = boxSize
+                        data.Box2D.Position = boxPos
+                        data.Box2D.Color = config.Boxes.GradientColor1
+                        data.Box2D.Transparency = config.Boxes.Transparency
+                        data.Box2D.Thickness = config.Boxes.Thickness
+                        data.Box2D.Filled = false
+                        data.Box2D.ZIndex = 2
+                        ApplyGradientToDrawing(data.Box2D, config.Boxes.GradientColor1, config.Boxes.GradientColor2, config.Boxes.GradientColor3, config.Boxes.GradientLerp, config.Boxes.GradientRotation, config.Boxes.GradientMoving, config.Boxes.GradientSpeed)
+
+                        data.Box2DOutline.Visible = true
+                        data.Box2DOutline.Position = boxPos - Vector2.new(1.5, 1.5)
+                        data.Box2DOutline.Size = boxSize + Vector2.new(3, 3)
+                        data.Box2DOutline.Color = Color3.fromRGB(0, 0, 0)
+                        data.Box2DOutline.Transparency = config.Boxes.Transparency
+                        data.Box2DOutline.Thickness = 1.5
+                        data.Box2DOutline.Filled = false
+                        data.Box2DOutline.ZIndex = 1
+                        ApplyGradientToDrawing(data.Box2DOutline, Color3.fromRGB(0, 0, 0), nil, nil, 0, 0, false, 1)
+
+                        if config.Boxes.Fill then
+                            data.BoxFill.Visible = true
+                            data.BoxFill.Size = boxSize
+                            data.BoxFill.Position = boxPos
+                            data.BoxFill.Color = config.Boxes.GradientColor1
+                            data.BoxFill.Transparency = config.Boxes.FillTransparency
+                            data.BoxFill.Filled = true
+                            data.BoxFill.Thickness = 0
+                            data.BoxFill.ZIndex = 0
+                            ApplyGradientToDrawing(data.BoxFill, config.Boxes.GradientColor1, config.Boxes.GradientColor2, config.Boxes.GradientColor3, config.Boxes.GradientLerp, config.Boxes.GradientRotation, config.Boxes.GradientMoving, config.Boxes.GradientSpeed)
+                        else
+                            data.BoxFill.Visible = false
+                        end
+                    else
+                        data.Box2D.Visible = false
+                        data.Box2DOutline.Visible = false
+                        data.BoxFill.Visible = false
+                    end
+
+                    -- 2. HEALTHBAR RENDERER
+                    if config.Healthbar and config.Healthbar.Enabled then
+                        local hpPercent = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
+                        local barWidth = 2
+                        local barHeight = height * hpPercent
+                        local barX = minX - 5 - barWidth
+
+                        data.HealthBg.Visible = true
+                        data.HealthBg.Position = Vector2.new(barX - 1.5, minY - 1.5)
+                        data.HealthBg.Size = Vector2.new(barWidth + 3, height + 3)
+                        data.HealthBg.Color = Color3.fromRGB(0, 0, 0)
+                        data.HealthBg.Transparency = config.Healthbar.Transparency
+                        data.HealthBg.Filled = true
+                        data.HealthBg.Thickness = 0
+                        data.HealthBg.ZIndex = 1
+                        ApplyGradientToDrawing(data.HealthBg, Color3.fromRGB(0, 0, 0), nil, nil, 0, 0, false, 1)
+
+                        local baseColor = config.Healthbar.GradientColor1
+
+                        data.HealthFg.Visible = hpPercent > 0
+                        data.HealthFg.Position = Vector2.new(barX, minY + height - barHeight)
+                        data.HealthFg.Size = Vector2.new(barWidth, barHeight)
+                        data.HealthFg.Color = baseColor
+                        data.HealthFg.Transparency = config.Healthbar.Transparency
+                        data.HealthFg.Filled = true
+                        data.HealthFg.Thickness = 0
+                        data.HealthFg.ZIndex = 2
+                        ApplyGradientToDrawing(data.HealthFg, baseColor, config.Healthbar.GradientColor2, config.Healthbar.GradientColor3, config.Healthbar.GradientLerp, config.Healthbar.GradientRotation, false, 1)
+                    else
+                        data.HealthBg.Visible = false
+                        data.HealthFg.Visible = false
+                    end
+
+                    -- 4. TEXT RENDERER
+                    local currentBottomY = maxY + 2
+                    if config.Names and config.Names.Enabled then
+                        data.Name.Visible = true
+                        data.Name.Text = displayName
+                        data.Name.Position = Vector2.new(minX + width/2, minY - config.Names.Size - 2)
+                        data.Name.Color = config.Names.Color
+                        data.Name.Transparency = config.Names.Transparency
+                        data.Name.Font = Settings.ESP.TextFont
+                        data.Name.Size = config.Names.Size
+                        data.Name.Center = true
+                        data.Name.Outline = true
+                        data.Name.OutlineColor = Color3.fromRGB(0, 0, 0)
+                        data.Name.ZIndex = 3
+                    else
+                        data.Name.Visible = false
+                    end
+
+                    if config.Weapon and config.Weapon.Enabled then
+                        data.Weapon.Visible = true
+                        data.Weapon.Text = weaponName
+                        data.Weapon.Position = Vector2.new(minX + width/2, currentBottomY)
+                        data.Weapon.Color = config.Weapon.Color
+                        data.Weapon.Transparency = config.Weapon.Transparency
+                        data.Weapon.Font = Settings.ESP.TextFont
+                        data.Weapon.Size = config.Weapon.Size
+                        data.Weapon.Center = true
+                        data.Weapon.Outline = true
+                        data.Weapon.OutlineColor = Color3.fromRGB(0, 0, 0)
+                        data.Weapon.ZIndex = 3
+                        currentBottomY = currentBottomY + config.Weapon.Size
+                    else
+                        data.Weapon.Visible = false
+                    end
+
+                    if config.Distance and config.Distance.Enabled then
+                        data.Distance.Visible = true
+                        data.Distance.Text = math.floor(dist) .. " Studs"
+                        data.Distance.Position = Vector2.new(minX + width/2, currentBottomY)
+                        data.Distance.Color = config.Distance.Color
+                        data.Distance.Transparency = config.Distance.Transparency
+                        data.Distance.Font = Settings.ESP.TextFont
+                        data.Distance.Size = config.Distance.Size
+                        data.Distance.Center = true
+                        data.Distance.Outline = true
+                        data.Distance.OutlineColor = Color3.fromRGB(0, 0, 0)
+                        data.Distance.ZIndex = 3
+                    else
+                        data.Distance.Visible = false
+                    end
+                else
+                    data.Box2D.Visible = false
+                    data.Box2DOutline.Visible = false
+                    data.BoxFill.Visible = false
+                    data.HealthBg.Visible = false
+                    data.HealthFg.Visible = false
+                    data.Name.Visible = false
+                    data.Weapon.Visible = false
+                    data.Distance.Visible = false
+                end
+
+                -- 3. SKELETON RENDERER
+                local skeletonSettings = config.Skeleton
+                if skeletonSettings and skeletonSettings.Enabled then
+                    local isR15 = (humanoid.RigType == Enum.HumanoidRigType.R15)
+                    local boneConnections = isR15 and R15Bones or R6Bones
+                    
+                    local activeBonesCount = 0
+                    for _, connection in ipairs(boneConnections) do
+                        local part1 = character:FindFirstChild(connection[1])
+                        local part2 = character:FindFirstChild(connection[2])
+                        
+                        if part1 and part2 then
+                            activeBonesCount = activeBonesCount + 1
+                            local pos1, onScreen1 = Camera:WorldToViewportPoint(part1.Position)
+                            local pos2, onScreen2 = Camera:WorldToViewportPoint(part2.Position)
+                            
+                            if onScreen1 and onScreen2 then
+                                local line = data.SkeletonLines[activeBonesCount]
+                                local outline = data.SkeletonOutlineLines[activeBonesCount]
+                                
+                                if line and outline then
+                                    local p1 = Vector2.new(pos1.X, pos1.Y)
+                                    local p2 = Vector2.new(pos2.X, pos2.Y)
+                                    
+                                    line.Visible = true
+                                    line.From = p1
+                                    line.To = p2
+                                    line.Color = skeletonSettings.GradientColor1
+                                    line.Transparency = skeletonSettings.Transparency
+                                    line.Thickness = skeletonSettings.Thickness
+                                    ApplyGradientToDrawing(line, skeletonSettings.GradientColor1, skeletonSettings.GradientColor2, skeletonSettings.GradientColor3, skeletonSettings.GradientLerp, skeletonSettings.GradientRotation, skeletonSettings.GradientMoving, skeletonSettings.GradientSpeed)
+                                    
+                                    local dir = (p2 - p1).Magnitude > 0 and (p2 - p1).Unit or Vector2.new(0, 0)
+                                    outline.Visible = true
+                                    outline.From = p1 - dir * 1.5
+                                    outline.To = p2 + dir * 1.5
+                                    outline.Color = Color3.fromRGB(0, 0, 0)
+                                    outline.Transparency = skeletonSettings.Transparency
+                                    outline.Thickness = skeletonSettings.Thickness + 3
+                                    ApplyGradientToDrawing(outline, Color3.fromRGB(0, 0, 0), nil, nil, 0, 0, false, 1)
+                                end
+                            else
+                                local line = data.SkeletonLines[activeBonesCount]
+                                local outline = data.SkeletonOutlineLines[activeBonesCount]
+                                if line then line.Visible = false end
+                                if outline then outline.Visible = false end
+                            end
+                        end
+                    end
+                    
+                    for i = activeBonesCount + 1, 14 do
+                        if data.SkeletonLines[i] then data.SkeletonLines[i].Visible = false end
+                        if data.SkeletonOutlineLines[i] then data.SkeletonOutlineLines[i].Visible = false end
+                    end
+                else
+                    for i = 1, 14 do
+                        if data.SkeletonLines[i] then data.SkeletonLines[i].Visible = false end
+                        if data.SkeletonOutlineLines[i] then data.SkeletonOutlineLines[i].Visible = false end
+                    end
+                end
+            else
+                if data.Highlight then data.Highlight.Enabled = false end
+            end
+        else
+            if data.Highlight then data.Highlight.Enabled = false end
+        end
+    else
+        if data.Highlight then data.Highlight.Enabled = false end
+    end
+
+    if not shouldRender2D then
+        data.Box2D.Visible = false
+        data.Box2DOutline.Visible = false
+        data.BoxFill.Visible = false
+        data.Name.Visible = false
+        data.Distance.Visible = false
+        data.Weapon.Visible = false
+        data.HealthBg.Visible = false
+        data.HealthFg.Visible = false
+        for i = 1, 14 do
+            if data.SkeletonLines[i] then data.SkeletonLines[i].Visible = false end
+            if data.SkeletonOutlineLines[i] then data.SkeletonOutlineLines[i].Visible = false end
+        end
+    end
+end
+
 local function UpdateESP()
+    local espSettings = Settings.ESP
+    for player, data in pairs(Drawings.Players) do
+        local character = player.Character
+        local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChild("Humanoid")
+
+        if character then
+            if data.Character ~= character then
+                data.Character = character
+                data.SpawnTime = tick()
+                if data.Highlight then data.Highlight:Destroy() data.Highlight = nil end
+            end
+        end
+
+        local passedTeamCheck = not espSettings.TeamCheck or (player.Team ~= LocalPlayer.Team)
+        local passedVisCheck = not espSettings.VisibleCheck or IsVisible(rootPart, character)
+        local passedSpawnCheck = (tick() - data.SpawnTime) >= espSettings.SpawnDelay
+        
+        local displayName = espSettings.Names.UseDisplayName and player.DisplayName or player.Name
+        local tool = character and character:FindFirstChildOfClass("Tool")
+        local weaponName = tool and tool.Name or "None"
+
+        RenderESPObject(character, rootPart, humanoid, displayName, player.Name, weaponName, data, espSettings, passedTeamCheck, passedVisCheck, passedSpawnCheck)
+    end
+
+    local npcSettings = Settings.NPC.ESP
+    if Toggles.NPCsEnabled and Toggles.NPCsEnabled.Value then
+        for model, info in pairs(npcModels) do
+            local data = Drawings.NPCs[model]
+            if data then
+                local character = model
+                local rootPart = info.RootPart
+                local humanoid = info.Humanoid
+
+                if character then
+                    if data.Character ~= character then
+                        data.Character = character
+                        data.SpawnTime = tick()
+                        if data.Highlight then data.Highlight:Destroy() data.Highlight = nil end
+                    end
+                end
+
+                local passedTeamCheck = true
+                if Toggles.NPCTeamCheck and Toggles.NPCTeamCheck.Value then
+                    local npcTeam = character:FindFirstChild("Team")
+                    if npcTeam then
+                        passedTeamCheck = npcTeam.Value ~= LocalPlayer.Team
+                    end
+                end
+
+                local passedVisCheck = not Toggles.NPCVisibleCheck or not Toggles.NPCVisibleCheck.Value or IsVisible(rootPart, character)
+                local passedSpawnCheck = (tick() - data.SpawnTime) >= npcSettings.SpawnDelay
+                
+                local weaponName = GetWeapon(character)
+
+                RenderESPObject(character, rootPart, humanoid, character.Name, character.Name, weaponName, data, npcSettings, passedTeamCheck, passedVisCheck, passedSpawnCheck)
+            end
+        end
+    else
+        for model, data in pairs(Drawings.NPCs) do
+            data.Box2D.Visible = false
+            data.Box2DOutline.Visible = false
+            data.BoxFill.Visible = false
+            data.Name.Visible = false
+            data.Distance.Visible = false
+            data.Weapon.Visible = false
+            data.HealthBg.Visible = false
+            data.HealthFg.Visible = false
+            for i = 1, 14 do
+                if data.SkeletonLines[i] then data.SkeletonLines[i].Visible = false end
+                if data.SkeletonOutlineLines[i] then data.SkeletonOutlineLines[i].Visible = false end
+            end
+        end
+    end
+end
+
+local function OldUpdateESP()
+    return
+end
+local function TempOldUpdateESP()
+    return
+    --[[
     local espSettings = Settings.ESP
     for player, data in pairs(Drawings.Players) do
         local character = player.Character
@@ -1505,6 +2315,7 @@ local function UpdateESP()
             end
         end
     end
+    --]]
 end
 
 -- ==========================================
@@ -1516,6 +2327,7 @@ MenuGroup:AddButton('Unload', function()
     
     -- Disable visuals settings to trigger cleanup
     Settings.ESP.Enabled = false
+    Settings.NPC.ESP.Enabled = false
     Settings.FOV.Enabled = false
     Settings.SilentAim.FOV.Enabled = false
     Settings.Crosshair.Enabled = false
@@ -1544,6 +2356,11 @@ MenuGroup:AddButton('Unload', function()
     -- Clean up player drawings
     for player in pairs(Drawings.Players) do
         RemovePlayer(player)
+    end
+
+    -- Clean up NPC drawings
+    for model in pairs(Drawings.NPCs) do
+        RemoveNPC(model)
     end
     
     -- Clean up static drawings
@@ -1574,6 +2391,7 @@ SaveManager:SetIgnoreIndexes({ 'MenuKeybind', 'ShowWatermark', 'ShowKeybinds' })
 SaveManager:BuildConfigSection(Tabs['UI Settings'])
 ThemeManager:ApplyToTab(Tabs['UI Settings'])
 SaveManager:LoadAutoloadConfig()
+pcall(ScanNPCPaths)
 
 -- ==========================================
 -- ENGINE: AIMBOT, DESYNC, RAKNET, HBE & MOVEMENT
@@ -1632,7 +2450,7 @@ local function ValidateArguments(Args, RayMethod)
 end
 
 local function GetClosestSilentTarget()
-    local closestPlayer, closestPart, shortestDistance = nil, nil, math.huge
+    local closestTarget, closestPart, shortestDistance = nil, nil, math.huge
     local mousePos = UserInputService:GetMouseLocation()
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Humanoid") then
@@ -1648,7 +2466,7 @@ local function GetClosestSilentTarget()
                             if onScreen then
                                 local distance = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
                                 if Toggles.EnableSilentAimFOV and Toggles.EnableSilentAimFOV.Value and distance > Options.SilentAimFOVRadius.Value then continue end
-                                if distance < shortestDistance then closestPlayer, closestPart, shortestDistance = player, part, distance end
+                                if distance < shortestDistance then closestTarget, closestPart, shortestDistance = player, part, distance end
                             end
                         end
                     end
@@ -1656,14 +2474,69 @@ local function GetClosestSilentTarget()
             end
         end
     end
-    return closestPlayer, closestPart
+    
+    if Toggles.NPCsEnabled and Toggles.NPCsEnabled.Value and Toggles.NPCTargetSilentAim and Toggles.NPCTargetSilentAim.Value then
+        for model, info in pairs(npcModels) do
+            local character = model
+            local humanoid = info.Humanoid
+            local rootPart = info.RootPart
+            if rootPart and character and (not humanoid or humanoid.Health > 0) then
+                if Toggles.TeamCheck and Toggles.TeamCheck.Value and Toggles.NPCTeamCheck and Toggles.NPCTeamCheck.Value then
+                    local npcTeam = character:FindFirstChild("Team")
+                    if npcTeam and npcTeam.Value == LocalPlayer.Team then continue end
+                end
+
+                if Options.SilentAimTargetParts and Options.SilentAimTargetParts.Value then
+                    for partName, isSelected in pairs(Options.SilentAimTargetParts.Value) do
+                        if isSelected then
+                            local part = character:FindFirstChild(partName) or (partName == "RootPart" and rootPart)
+                            if part then
+                                if Toggles.VisibleCheck and Toggles.VisibleCheck.Value and not IsVisible(part, character) then continue end
+                                local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                                if onScreen then
+                                    local distance = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+                                    if Toggles.EnableSilentAimFOV and Toggles.EnableSilentAimFOV.Value and distance > Options.SilentAimFOVRadius.Value then continue end
+                                    if distance < shortestDistance then closestTarget, closestPart, shortestDistance = character, part, distance end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return closestTarget, closestPart
 end
 
-local function IsSilentTargetValid(player, part)
-    if not player or not part or not player.Character or not part.Parent then return false end
-    if Toggles.HealthCheck and Toggles.HealthCheck.Value and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health <= 0 then return false end
-    if Toggles.TeamCheck and Toggles.TeamCheck.Value and player.Team == LocalPlayer.Team then return false end
-    if Toggles.VisibleCheck and Toggles.VisibleCheck.Value and not IsVisible(part, player.Character) then return false end
+local function IsSilentTargetValid(playerOrModel, part)
+    if not playerOrModel or not part or not part.Parent then return false end
+    
+    local character
+    local isPlayer = playerOrModel:IsA("Player")
+    if isPlayer then
+        character = playerOrModel.Character
+    else
+        character = playerOrModel
+    end
+    
+    if not character then return false end
+    
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if Toggles.HealthCheck and Toggles.HealthCheck.Value and humanoid and humanoid.Health <= 0 then return false end
+    
+    if isPlayer then
+        if Toggles.TeamCheck and Toggles.TeamCheck.Value and playerOrModel.Team == LocalPlayer.Team then return false end
+    else
+        if Toggles.TeamCheck and Toggles.TeamCheck.Value and Toggles.NPCTeamCheck and Toggles.NPCTeamCheck.Value then
+            local npcTeam = character:FindFirstChild("Team")
+            if npcTeam then
+                if npcTeam.Value == LocalPlayer.Team then return false end
+            end
+        end
+    end
+    
+    if Toggles.VisibleCheck and Toggles.VisibleCheck.Value and not IsVisible(part, character) then return false end
     return true
 end
 
@@ -1823,85 +2696,175 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(deltaTime)
     
     -- === HBE ENGINE LOGIC ===
     local hbeEnabled = Toggles.HBEToggle and Toggles.HBEToggle.Value
-    local hbeSize = Options.HBESize and Options.HBESize.Value or 5
-    local hbeTrans = Options.HBETransparency and Options.HBETransparency.Value or 0.5
-    local hbeCollide = Toggles.HBECollisions and Toggles.HBECollisions.Value or false
-    
-    local ignoreTeams = Toggles.HBEIgnoreTeammates and Toggles.HBEIgnoreTeammates.Value or false
-    local ignoreFF = Toggles.HBEIgnoreFF and Toggles.HBEIgnoreFF.Value or false
-    local ignoreSitting = Toggles.HBEIgnoreSitting and Toggles.HBEIgnoreSitting.Value or false
-    local ignoreSelected = Toggles.HBEIgnoreSelected and Toggles.HBEIgnoreSelected.Value or false
-    local ignoreTeamsSelected = Toggles.HBEIgnoreSelectedTeams and Toggles.HBEIgnoreSelectedTeams.Value or false
+    if hbeEnabled then
+        local hbeSize = Options.HBESize and Options.HBESize.Value or 5
+        local hbeTrans = Options.HBETransparency and Options.HBETransparency.Value or 0.5
+        local hbeCollide = Toggles.HBECollisions and Toggles.HBECollisions.Value or false
+        
+        local ignoreTeams = Toggles.HBEIgnoreTeammates and Toggles.HBEIgnoreTeammates.Value or false
+        local ignoreFF = Toggles.HBEIgnoreFF and Toggles.HBEIgnoreFF.Value or false
+        local ignoreSitting = Toggles.HBEIgnoreSitting and Toggles.HBEIgnoreSitting.Value or false
+        local ignoreSelected = Toggles.HBEIgnoreSelected and Toggles.HBEIgnoreSelected.Value or false
+        local ignoreTeamsSelected = Toggles.HBEIgnoreSelectedTeams and Toggles.HBEIgnoreSelectedTeams.Value or false
 
-    local targetSize = Vector3.new(hbeSize, hbeSize, hbeSize)
+        local targetSize = Vector3.new(hbeSize, hbeSize, hbeSize)
 
-    local selectedParts = {}
-    local customPartEnabled = false
-    local customPartName = Options.HBECustomPartName and Options.HBECustomPartName.Value or "HeadHB"
+        local selectedParts = {}
+        local customPartEnabled = false
+        local customPartName = Options.HBECustomPartName and Options.HBECustomPartName.Value or "HeadHB"
 
-    if Options.HBEParts and type(Options.HBEParts.Value) == "table" then
-        for key, isSelected in pairs(Options.HBEParts.Value) do
-            if isSelected then
-                if key == "Custom Part" then
-                    customPartEnabled = true
-                elseif HitboxPartsMap[key] then
-                    for _, realPartName in ipairs(HitboxPartsMap[key]) do
-                        selectedParts[realPartName] = true
+        if Options.HBEParts and type(Options.HBEParts.Value) == "table" then
+            for key, isSelected in pairs(Options.HBEParts.Value) do
+                if isSelected then
+                    if key == "Custom Part" then
+                        customPartEnabled = true
+                    elseif HitboxPartsMap[key] then
+                        for _, realPartName in ipairs(HitboxPartsMap[key]) do
+                            selectedParts[realPartName] = true
+                        end
                     end
                 end
             end
         end
-    end
 
-    for _, player in pairs(Players:GetPlayers()) do
-        if player == LocalPlayer then continue end
-        local tChar = player.Character
-        local tHum = tChar and tChar:FindFirstChild("Humanoid")
-        
-        if tChar and tHum then
-            local isDead = (tHum.Health <= 0)
-            local isTeammate = (player.Team == LocalPlayer.Team)
-            local hasFF = tChar:FindFirstChildWhichIsA("ForceField") ~= nil
-            local isSitting = tHum.Sit
-            local isIgnoredPlayer = ignoreSelected and Options.HBEIgnorePlayers and Options.HBEIgnorePlayers.Value[player.Name]
+        for _, player in pairs(Players:GetPlayers()) do
+            if player == LocalPlayer then continue end
+            local tChar = player.Character
+            local tHum = tChar and tChar:FindFirstChild("Humanoid")
             
-            local isIgnoredTeam = false
-            if ignoreTeamsSelected and Options.HBEIgnoreTeams and player.Team then
-                isIgnoredTeam = Options.HBEIgnoreTeams.Value[player.Team.Name]
-            end
+            if tChar and tHum then
+                local isDead = (tHum.Health <= 0)
+                local isTeammate = (player.Team == LocalPlayer.Team)
+                local hasFF = tChar:FindFirstChildWhichIsA("ForceField") ~= nil
+                local isSitting = tHum.Sit
+                local isIgnoredPlayer = ignoreSelected and Options.HBEIgnorePlayers and Options.HBEIgnorePlayers.Value[player.Name]
+                
+                local isIgnoredTeam = false
+                if ignoreTeamsSelected and Options.HBEIgnoreTeams and player.Team then
+                    isIgnoredTeam = Options.HBEIgnoreTeams.Value[player.Team.Name]
+                end
 
-            local shouldIgnore = isDead or (ignoreTeams and isTeammate) or (ignoreFF and hasFF) or (ignoreSitting and isSitting) or isIgnoredPlayer or isIgnoredTeam
-            
-            OriginalHitboxProperties[player] = OriginalHitboxProperties[player] or {}
-            
-            for _, part in ipairs(tChar:GetChildren()) do
-                if part:IsA("BasePart") then
-                    if not OriginalHitboxProperties[player][part] then
-                        OriginalHitboxProperties[player][part] = {
-                            Size = part.Size,
-                            Transparency = part.Transparency,
-                            CanCollide = part.CanCollide,
-                            Massless = part.Massless
-                        }
+                local shouldIgnore = isDead or (ignoreTeams and isTeammate) or (ignoreFF and hasFF) or (ignoreSitting and isSitting) or isIgnoredPlayer or isIgnoredTeam
+                
+                if shouldIgnore then
+                    if OriginalHitboxProperties[player] then
+                        RestoreAndRemoveTargetHBE(player)
                     end
-                    
-                    local orig = OriginalHitboxProperties[player][part]
-                    local isTargetPart = selectedParts[part.Name] or (customPartEnabled and part.Name == customPartName)
-                    
-                    if hbeEnabled and not shouldIgnore and isTargetPart then
-                        if part.Size ~= targetSize then part.Size = targetSize end
-                        if part.Transparency ~= hbeTrans then part.Transparency = hbeTrans end
-                        if part.CanCollide ~= hbeCollide then part.CanCollide = hbeCollide end
-                        
-                        local targetMassless = (part.Name ~= "HumanoidRootPart")
-                        if part.Massless ~= targetMassless then part.Massless = targetMassless end
-                    else
-                        if part.Size ~= orig.Size then part.Size = orig.Size end
-                        if part.Transparency ~= orig.Transparency then part.Transparency = orig.Transparency end
-                        if part.CanCollide ~= orig.CanCollide then part.CanCollide = orig.CanCollide end
-                        if part.Massless ~= orig.Massless then part.Massless = orig.Massless end
+                    continue
+                end
+
+                OriginalHitboxProperties[player] = OriginalHitboxProperties[player] or {}
+                
+                for _, part in ipairs(tChar:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        local isTargetPart = selectedParts[part.Name] or (customPartEnabled and part.Name == customPartName)
+                        if isTargetPart then
+                            if not OriginalHitboxProperties[player][part] then
+                                OriginalHitboxProperties[player][part] = {
+                                    Size = part.Size,
+                                    Transparency = part.Transparency,
+                                    CanCollide = part.CanCollide,
+                                    Massless = part.Massless
+                                }
+                            end
+                            if part.Size ~= targetSize then part.Size = targetSize end
+                            if part.Transparency ~= hbeTrans then part.Transparency = hbeTrans end
+                            if part.CanCollide ~= hbeCollide then part.CanCollide = hbeCollide end
+                            local targetMassless = (part.Name ~= "HumanoidRootPart")
+                            if part.Massless ~= targetMassless then part.Massless = targetMassless end
+                        end
                     end
                 end
+            end
+        end
+    else
+        for player in pairs(OriginalHitboxProperties) do
+            if typeof(player) == "Instance" and player:IsA("Player") then
+                RestoreAndRemoveTargetHBE(player)
+            end
+        end
+    end
+
+    -- NPC HBE Logic
+    local npcHbeEnabled = Toggles.NPCHBEToggle and Toggles.NPCHBEToggle.Value
+    if Toggles.NPCsEnabled and Toggles.NPCsEnabled.Value and npcHbeEnabled then
+        local npcHbeSize = Options.NPCHBESize and Options.NPCHBESize.Value or 5
+        local npcHbeTrans = Options.NPCHBETransparency and Options.NPCHBETransparency.Value or 0.5
+        local npcHbeCollide = Toggles.NPCHBECollisions and Toggles.NPCHBECollisions.Value or false
+        local npcTargetSize = Vector3.new(npcHbeSize, npcHbeSize, npcHbeSize)
+
+        local npcSelectedParts = {}
+        local npcCustomPartEnabled = false
+        local npcCustomPartName = Options.NPCHBECustomPartName and Options.NPCHBECustomPartName.Value or "HeadHB"
+
+        if Options.NPCHBEParts and type(Options.NPCHBEParts.Value) == "table" then
+            for key, isSelected in pairs(Options.NPCHBEParts.Value) do
+                if isSelected then
+                    if key == "Custom Part" then
+                        npcCustomPartEnabled = true
+                    elseif HitboxPartsMap[key] then
+                        for _, realPartName in ipairs(HitboxPartsMap[key]) do
+                            npcSelectedParts[realPartName] = true
+                        end
+                    end
+                end
+            end
+        end
+
+        for model, info in pairs(npcModels) do
+            local tChar = model
+            local tHum = info.Humanoid
+            
+            if tChar then
+                local isDead = tHum and (tHum.Health <= 0)
+                local isTeammate = false
+                if Toggles.TeamCheck and Toggles.TeamCheck.Value and Toggles.NPCTeamCheck and Toggles.NPCTeamCheck.Value then
+                    local npcTeam = tChar:FindFirstChild("Team")
+                    if npcTeam and npcTeam.Value == LocalPlayer.Team then
+                        isTeammate = true
+                    end
+                end
+                
+                local hasFF = tChar:FindFirstChildWhichIsA("ForceField") ~= nil
+                local isSitting = tHum and tHum.Sit
+                
+                local shouldIgnore = isDead or (ignoreTeams and isTeammate) or (ignoreFF and hasFF) or (ignoreSitting and isSitting)
+                
+                if shouldIgnore then
+                    if OriginalHitboxProperties[tChar] then
+                        RestoreAndRemoveTargetHBE(tChar)
+                    end
+                    continue
+                end
+
+                OriginalHitboxProperties[tChar] = OriginalHitboxProperties[tChar] or {}
+                
+                for _, part in ipairs(tChar:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        local isTargetPart = npcSelectedParts[part.Name] or (npcCustomPartEnabled and part.Name == npcCustomPartName)
+                        if isTargetPart then
+                            if not OriginalHitboxProperties[tChar][part] then
+                                OriginalHitboxProperties[tChar][part] = {
+                                    Size = part.Size,
+                                    Transparency = part.Transparency,
+                                    CanCollide = part.CanCollide,
+                                    Massless = part.Massless
+                                }
+                            end
+                            if part.Size ~= npcTargetSize then part.Size = npcTargetSize end
+                            if part.Transparency ~= npcHbeTrans then part.Transparency = npcHbeTrans end
+                            if part.CanCollide ~= npcHbeCollide then part.CanCollide = npcHbeCollide end
+                            local targetMassless = (part.Name ~= "HumanoidRootPart")
+                            if part.Massless ~= targetMassless then part.Massless = targetMassless end
+                        end
+                    end
+                end
+            end
+        end
+    else
+        for target in pairs(OriginalHitboxProperties) do
+            if typeof(target) == "Instance" and target:IsA("Model") then
+                RestoreAndRemoveTargetHBE(target)
             end
         end
     end
