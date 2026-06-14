@@ -4,5 +4,5 @@ Gemini - vibecoded universal project
 ## 📜 Loadstring
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/owosky/Jerkmate/refs/heads/main/jerkmateranked.lua](https://raw.githubusercontent.com/owosky/jerkmatev2/refs/heads/main/jerkmatev2.luau"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/owosky/jerkmatev2/refs/heads/main/jerkmatev2.luau")()
 ```
