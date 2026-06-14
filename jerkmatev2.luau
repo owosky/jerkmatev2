@@ -1143,7 +1143,7 @@ ScanNPCPaths = function()
     
     local wsHasNPCs = false
     for _, child in ipairs(workspaceChildren) do
-        if child:IsA("Model") and not playerChars[child] then
+        if child:IsA("Model") and child ~= LocalPlayer.Character and not playerChars[child] then
             local hum = child:FindFirstChildOfClass("Humanoid")
             local hrp = child:FindFirstChild("HumanoidRootPart")
             if hum or hrp then
@@ -1159,19 +1159,19 @@ ScanNPCPaths = function()
     end
     
     for _, child in ipairs(workspaceChildren) do
-        if child:IsA("Folder") then
-            local folderHasNPCs = false
+        if (child:IsA("Folder") or child:IsA("Model")) and child ~= LocalPlayer.Character and not playerChars[child] then
+            local containerHasNPCs = false
             for _, subChild in ipairs(child:GetChildren()) do
-                if subChild:IsA("Model") and not playerChars[subChild] then
+                if subChild:IsA("Model") and subChild ~= LocalPlayer.Character and not playerChars[subChild] then
                     local hum = subChild:FindFirstChildOfClass("Humanoid")
                     local hrp = subChild:FindFirstChild("HumanoidRootPart")
                     if hum or hrp then
-                        folderHasNPCs = true
+                        containerHasNPCs = true
                         break
                     end
                 end
             end
-            if folderHasNPCs then
+            if containerHasNPCs then
                 table.insert(paths, { Name = child.Name, Instance = child })
             end
         end
@@ -1180,18 +1180,20 @@ ScanNPCPaths = function()
     for _, descendant in ipairs(Workspace:GetDescendants()) do
         if descendant:IsA("Humanoid") or descendant.Name == "HumanoidRootPart" then
             local pModel = descendant.Parent
-            if pModel and pModel:IsA("Model") and not playerChars[pModel] then
+            if pModel and pModel:IsA("Model") and pModel ~= LocalPlayer.Character and not playerChars[pModel] then
                 local folder = pModel.Parent
-                if folder and folder:IsA("Folder") and folder ~= Workspace then
-                    local alreadyAdded = false
-                    for _, p in ipairs(paths) do
-                        if p.Instance == folder then
-                            alreadyAdded = true
-                            break
+                if folder and (folder:IsA("Folder") or folder:IsA("Model")) and folder ~= Workspace then
+                    if folder ~= LocalPlayer.Character and not playerChars[folder] then
+                        local alreadyAdded = false
+                        for _, p in ipairs(paths) do
+                            if p.Instance == folder then
+                                alreadyAdded = true
+                                break
+                            end
                         end
-                    end
-                    if not alreadyAdded then
-                        table.insert(paths, { Name = folder.Name, Instance = folder })
+                        if not alreadyAdded then
+                            table.insert(paths, { Name = folder.Name, Instance = folder })
+                        end
                     end
                 end
             end
