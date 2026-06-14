@@ -138,11 +138,35 @@ local Settings = {
         BounceAmplitude = 5,
         Colors = { Top = Color3.fromRGB(255, 0, 0), Bottom = Color3.fromRGB(0, 255, 0), Left = Color3.fromRGB(0, 0, 255), Right = Color3.fromRGB(255, 255, 0) },
         Transparency = 1
+    },
+    SilentAim = {
+        Enabled = false,
+        TargetPart = "HumanoidRootPart",
+        BulletTP = false,
+        MultiplyUnitBy = 1000,
+        FOV = {
+            Enabled = false,
+            Radius = 100,
+            Position = Vector2.new(0, 0),
+            Transparency = 0.2,
+            Thickness = 1,
+            Filled = false,
+            FillTransparency = 0.2,
+            Sides = 64,
+            GradientLerp = 1,
+            GradientColor1 = Color3.fromRGB(255, 255, 255),
+            GradientColor2 = Color3.fromRGB(255, 255, 255),
+            GradientColor3 = Color3.fromRGB(255, 255, 255),
+            GradientRotation = 90,
+            GradientMoving = false,
+            GradientSpeed = 1
+        }
     }
 }
 
 local Drawings = {
     FOV = { Outline = Drawing.new("Circle"), Main = Drawing.new("Circle"), Fill = Drawing.new("Circle") },
+    SilentAimFOV = { Outline = Drawing.new("Circle"), Main = Drawing.new("Circle"), Fill = Drawing.new("Circle") },
     Crosshair = {
         Main = { Top = Drawing.new("Line"), Bottom = Drawing.new("Line"), Left = Drawing.new("Line"), Right = Drawing.new("Line") },
         Outline = { Top = Drawing.new("Line"), Bottom = Drawing.new("Line"), Left = Drawing.new("Line"), Right = Drawing.new("Line") }
@@ -189,6 +213,10 @@ local R6Bones = {
 Drawings.FOV.Outline.ZIndex = 1
 Drawings.FOV.Main.ZIndex = 2
 Drawings.FOV.Fill.ZIndex = 0
+
+Drawings.SilentAimFOV.Outline.ZIndex = 1
+Drawings.SilentAimFOV.Main.ZIndex = 2
+Drawings.SilentAimFOV.Fill.ZIndex = 0
 
 Drawings.Desync.ServerPositionOutline.ZIndex = 1
 Drawings.Desync.ServerPositionMain.ZIndex = 2
@@ -398,7 +426,7 @@ TextGroup:AddDropdown('TextFontDropdown', {
 -- AIM TAB LOGIC
 -- ==========================================
 local AimGroup = Tabs.Aim:AddLeftGroupbox('Main & Smoothing')
-local FOVGroup = Tabs.Aim:AddRightGroupbox('FOV & Checks')
+local FOVGroup = Tabs.Aim:AddRightGroupbox('FOV Limit')
 
 AimGroup:AddToggle('AimAssist', { Text = 'Enable Aim Assist', Default = false }):AddKeyPicker('AimKeybind', { Default = 'None', SyncToggleState = false, Mode = 'Hold', Text = 'Aim Assist Key', NoUI = false })
 AimGroup:AddDropdown('AimMethod', { Values = { 'MouseMoverel', 'Camera' }, Default = 1, Multi = false, Text = 'Aim Method' })
@@ -430,11 +458,43 @@ FOVGroup:AddSlider('FOVGradLerp', { Text = 'Gradient Lerp', Default = 1, Min = 0
 FOVGroup:AddToggle('FOVGradMoving', { Text = 'Moving Rotation', Default = false, Callback = function(v) Settings.FOV.GradientMoving = v end })
 FOVGroup:AddSlider('FOVGradSpeed', { Text = 'Rotation Speed', Default = 1, Min = 0.1, Max = 10, Rounding = 1, Compact = true, Callback = function(v) Settings.FOV.GradientSpeed = v end })
 FOVGroup:AddSlider('FOVGradRotation', { Text = 'Gradient Rotation', Default = 90, Min = 0, Max = 360, Rounding = 0, Compact = true, Callback = function(v) Settings.FOV.GradientRotation = v end })
-FOVGroup:AddDivider()
+-- ==========================================
+-- SILENT AIM TAB LOGIC
+-- ==========================================
+local SilentAimGroup = Tabs.Aim:AddLeftGroupbox('Silent Aim')
+local SilentAimFOVGroup = Tabs.Aim:AddRightGroupbox('Silent Aim FOV')
 
-FOVGroup:AddToggle('VisibleCheck', { Text = 'Visible Check', Default = true })
-FOVGroup:AddToggle('TeamCheck', { Text = 'Team Check', Default = true })
-FOVGroup:AddToggle('HealthCheck', { Text = 'Health Check', Default = true })
+SilentAimGroup:AddToggle('SilentAim', { Text = 'Enable Silent Aim', Default = false }):AddKeyPicker('SilentAimKeybind', { Default = 'None', SyncToggleState = false, Mode = 'Hold', Text = 'Silent Aim Key', NoUI = false })
+SilentAimGroup:AddDropdown('SilentAimMethod', { Values = { 'Raycast', 'FindPartOnRayWithIgnoreList', 'FindPartOnRayWithWhitelist', 'FindPartOnRay', 'ViewportPointToRay', 'ScreenPointToRay' }, Default = 1, Multi = false, Text = 'Silent Aim Method' })
+SilentAimGroup:AddDropdown('SilentAimTargetParts', { Values = { 'Head', 'HumanoidRootPart', 'Torso', 'UpperTorso', 'LowerTorso' }, Default = 2, Multi = true, Text = 'Target Parts' })
+SilentAimGroup:AddToggle('SilentAimBulletTP', { Text = 'Bullet Teleport', Default = false, Callback = function(v) Settings.SilentAim.BulletTP = v end })
+SilentAimGroup:AddSlider('SilentAimUnitsMultiplier', { Text = 'Units Multiplier', Default = 1000, Min = 1, Max = 5000, Rounding = 0, Compact = true, Callback = function(v) Settings.SilentAim.MultiplyUnitBy = v end })
+SilentAimGroup:AddSlider('SilentAimHitChance', { Text = 'Hit Chance', Default = 100, Min = 0, Max = 100, Rounding = 0, Compact = true })
+
+SilentAimFOVGroup:AddToggle('EnableSilentAimFOV', { Text = 'Enable FOV Limit', Default = true })
+
+local DrawSilentAimFOVCircle = SilentAimFOVGroup:AddToggle('DrawSilentAimFOVCircle', { Text = 'Draw FOV Circle', Default = false, Callback = function(v) Settings.SilentAim.FOV.Enabled = v end })
+DrawSilentAimFOVCircle:AddColorPicker('SilentAimFOVGrad1Color', { Default = Color3.fromRGB(255, 255, 255), Transparency = 0.2, Title = 'Gradient Color 1', Callback = function(Color) Settings.SilentAim.FOV.GradientColor1 = Color; Settings.SilentAim.FOV.Transparency = GetAlpha('SilentAimFOVGrad1Color') end })
+DrawSilentAimFOVCircle:AddColorPicker('SilentAimFOVGrad2Color', { Default = Color3.fromRGB(255, 255, 255), Transparency = 0.2, Title = 'Gradient Color 2', Callback = function(Color) Settings.SilentAim.FOV.GradientColor2 = Color end })
+DrawSilentAimFOVCircle:AddColorPicker('SilentAimFOVGrad3Color', { Default = Color3.fromRGB(255, 255, 255), Transparency = 0.2, Title = 'Gradient Color 3', Callback = function(Color) Settings.SilentAim.FOV.GradientColor3 = Color end })
+
+local DrawSilentAimFOVFill = SilentAimFOVGroup:AddToggle('DrawSilentAimFOVFill', { Text = 'Draw FOV Fill', Default = false, Callback = function(v) Settings.SilentAim.FOV.Filled = v end })
+
+SilentAimFOVGroup:AddSlider('SilentAimFOVRadius', { Text = 'FOV Radius', Default = 100, Min = 10, Max = 800, Rounding = 0, Compact = true, Callback = function(v) Settings.SilentAim.FOV.Radius = v end })
+SilentAimFOVGroup:AddSlider('SilentAimFOVThickness', { Text = 'FOV Thickness', Default = 1, Min = 1, Max = 5, Rounding = 0, Compact = true, Callback = function(v) Settings.SilentAim.FOV.Thickness = v end })
+
+SilentAimFOVGroup:AddSlider('SilentAimFOVGradLerp', { Text = 'Gradient Lerp', Default = 1, Min = 0, Max = 1, Rounding = 2, Compact = true, Callback = function(v) Settings.SilentAim.FOV.GradientLerp = v end })
+SilentAimFOVGroup:AddToggle('SilentAimFOVGradMoving', { Text = 'Moving Rotation', Default = false, Callback = function(v) Settings.SilentAim.FOV.GradientMoving = v end })
+SilentAimFOVGroup:AddSlider('SilentAimFOVGradSpeed', { Text = 'Rotation Speed', Default = 1, Min = 0.1, Max = 10, Rounding = 1, Compact = true, Callback = function(v) Settings.SilentAim.FOV.GradientSpeed = v end })
+SilentAimFOVGroup:AddSlider('SilentAimFOVGradRotation', { Text = 'Gradient Rotation', Default = 90, Min = 0, Max = 360, Rounding = 0, Compact = true, Callback = function(v) Settings.SilentAim.FOV.GradientRotation = v end })
+
+-- ==========================================
+-- UNIVERSAL TARGET CHECKS
+-- ==========================================
+local ChecksGroup = Tabs.Aim:AddRightGroupbox('Target Checks')
+ChecksGroup:AddToggle('VisibleCheck', { Text = 'Visible Check', Default = true })
+ChecksGroup:AddToggle('TeamCheck', { Text = 'Team Check', Default = true })
+ChecksGroup:AddToggle('HealthCheck', { Text = 'Health Check', Default = true })
 
 -- ==========================================
 -- DESYNC TAB LOGIC
@@ -1034,6 +1094,7 @@ local function ApplyGradientToDrawing(drawingObject, color1, color2, color3, ler
 end
 
 local function UpdateFOV()
+    -- Main FOV Circle
     local fov = Drawings.FOV
     local fovSettings = Settings.FOV
     if fovSettings.Enabled then
@@ -1077,6 +1138,52 @@ local function UpdateFOV()
         fov.Main.Visible = false
         fov.Outline.Visible = false
         fov.Fill.Visible = false
+    end
+
+    -- Silent Aim FOV Circle
+    local sfov = Drawings.SilentAimFOV
+    local sfovSettings = Settings.SilentAim.FOV
+    if sfovSettings.Enabled then
+        local pos, r = sfovSettings.Position, sfovSettings.Radius
+        
+        -- Always draw black outline behind main circle (1.5px bigger, slightly wider radius)
+        sfov.Outline.Visible = true
+        sfov.Outline.Position = pos
+        sfov.Outline.Radius = r + 1.0
+        sfov.Outline.Color = Color3.fromRGB(0, 0, 0)
+        sfov.Outline.Transparency = sfovSettings.Transparency
+        sfov.Outline.Thickness = sfovSettings.Thickness + 3
+        sfov.Outline.Filled = false
+        sfov.Outline.NumSides = sfovSettings.Sides
+        ApplyGradientToDrawing(sfov.Outline, Color3.fromRGB(0, 0, 0), nil, nil, 0, 0, false, 1)
+
+        -- Main outline/line circle
+        sfov.Main.Visible = true
+        sfov.Main.Position = pos
+        sfov.Main.Radius = r
+        sfov.Main.Color = sfovSettings.GradientColor1
+        sfov.Main.Transparency = sfovSettings.Transparency
+        sfov.Main.Thickness = sfovSettings.Thickness
+        sfov.Main.Filled = false
+        sfov.Main.NumSides = sfovSettings.Sides
+        ApplyGradientToDrawing(sfov.Main, sfovSettings.GradientColor1, sfovSettings.GradientColor2, sfovSettings.GradientColor3, sfovSettings.GradientLerp, sfovSettings.GradientRotation, sfovSettings.GradientMoving, sfovSettings.GradientSpeed)
+
+        if sfovSettings.Filled then
+            sfov.Fill.Visible = true
+            sfov.Fill.Position = pos
+            sfov.Fill.Radius = r
+            sfov.Fill.Color = sfovSettings.GradientColor1
+            sfov.Fill.Transparency = sfovSettings.FillTransparency or 0.2
+            sfov.Fill.Filled = true
+            sfov.Fill.NumSides = sfovSettings.Sides
+            ApplyGradientToDrawing(sfov.Fill, sfovSettings.GradientColor1, sfovSettings.GradientColor2, sfovSettings.GradientColor3, sfovSettings.GradientLerp, sfovSettings.GradientRotation, sfovSettings.GradientMoving, sfovSettings.GradientSpeed)
+        else
+            sfov.Fill.Visible = false
+        end
+    else
+        sfov.Main.Visible = false
+        sfov.Outline.Visible = false
+        sfov.Fill.Visible = false
     end
 end
 
@@ -1410,6 +1517,7 @@ MenuGroup:AddButton('Unload', function()
     -- Disable visuals settings to trigger cleanup
     Settings.ESP.Enabled = false
     Settings.FOV.Enabled = false
+    Settings.SilentAim.FOV.Enabled = false
     Settings.Crosshair.Enabled = false
     Settings.SelfChams.Enabled = false
     Settings.Desync.ShowServerPosition = false
@@ -1442,6 +1550,9 @@ MenuGroup:AddButton('Unload', function()
     pcall(function() Drawings.FOV.Outline:Remove() end)
     pcall(function() Drawings.FOV.Main:Remove() end)
     pcall(function() Drawings.FOV.Fill:Remove() end)
+    pcall(function() Drawings.SilentAimFOV.Outline:Remove() end)
+    pcall(function() Drawings.SilentAimFOV.Main:Remove() end)
+    pcall(function() Drawings.SilentAimFOV.Fill:Remove() end)
     for _, line in pairs(Drawings.Crosshair.Main) do pcall(function() line:Remove() end) end
     for _, line in pairs(Drawings.Crosshair.Outline) do pcall(function() line:Remove() end) end
     pcall(function() Drawings.Desync.ServerPositionMain:Remove() end)
@@ -1469,6 +1580,163 @@ SaveManager:LoadAutoloadConfig()
 -- ==========================================
 local Stats = game:GetService("Stats")
 local tickTimer, currentTarget, currentTargetPart = 0, nil, nil
+local silentTarget, silentTargetPart = nil, nil
+
+-- ==========================================
+-- SILENT AIM METAMETHOD HOOKS & TARGETING
+-- ==========================================
+local ExpectedArguments = {
+    ViewportPointToRay = {
+        ArgCountRequired = 2,
+        Args = { "number", "number" }
+    },
+    ScreenPointToRay = {
+        ArgCountRequired = 2,
+        Args = { "number", "number" }
+    },
+    Raycast = {
+        ArgCountRequired = 2,
+        Args = { "Vector3", "Vector3", "RaycastParams" }
+    },
+    FindPartOnRay = {
+        ArgCountRequired = 1,
+        Args = { "Ray", "Instance", "boolean", "boolean" }
+    },
+    FindPartOnRayWithIgnoreList = {
+        ArgCountRequired = 2,
+        Args = { "Ray", "table", "boolean", "boolean" }
+    },
+    FindPartOnRayWithWhitelist = {
+        ArgCountRequired = 2,
+        Args = { "Ray", "table", "boolean" }
+    }
+}
+
+local function CalculateChance(percentage)
+    return math.random(1, 100) <= percentage
+end
+
+local function ValidateArguments(Args, RayMethod)
+    if #Args < RayMethod.ArgCountRequired then
+        return false
+    end
+    for Pos, Expected in ipairs(RayMethod.Args) do
+        local Argument = Args[Pos]
+        if Argument ~= nil then
+            if typeof(Argument) ~= Expected then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+local function GetClosestSilentTarget()
+    local closestPlayer, closestPart, shortestDistance = nil, nil, math.huge
+    local mousePos = UserInputService:GetMouseLocation()
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Humanoid") then
+            if Toggles.HealthCheck and Toggles.HealthCheck.Value and player.Character.Humanoid.Health <= 0 then continue end
+            if Toggles.TeamCheck and Toggles.TeamCheck.Value and player.Team == LocalPlayer.Team then continue end
+            if Options.SilentAimTargetParts and Options.SilentAimTargetParts.Value then
+                for partName, isSelected in pairs(Options.SilentAimTargetParts.Value) do
+                    if isSelected then
+                        local part = player.Character:FindFirstChild(partName)
+                        if part then
+                            if Toggles.VisibleCheck and Toggles.VisibleCheck.Value and not IsVisible(part, player.Character) then continue end
+                            local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                            if onScreen then
+                                local distance = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+                                if Toggles.EnableSilentAimFOV and Toggles.EnableSilentAimFOV.Value and distance > Options.SilentAimFOVRadius.Value then continue end
+                                if distance < shortestDistance then closestPlayer, closestPart, shortestDistance = player, part, distance end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closestPlayer, closestPart
+end
+
+local function IsSilentTargetValid(player, part)
+    if not player or not part or not player.Character or not part.Parent then return false end
+    if Toggles.HealthCheck and Toggles.HealthCheck.Value and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health <= 0 then return false end
+    if Toggles.TeamCheck and Toggles.TeamCheck.Value and player.Team == LocalPlayer.Team then return false end
+    if Toggles.VisibleCheck and Toggles.VisibleCheck.Value and not IsVisible(part, player.Character) then return false end
+    return true
+end
+
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+    local Method = getnamecallmethod()
+    local Args = {...}
+    
+    local silentAimEnabled = Toggles.SilentAim and Toggles.SilentAim.Value
+    local silentKeyActive = Options.SilentAimKeybind and Options.SilentAimKeybind:GetState()
+    local isSilentActive = silentAimEnabled and (silentKeyActive or Options.SilentAimKeybind.Value == 'None')
+    
+    if isSilentActive and not checkcaller() then
+        local hitChanceVal = Options.SilentAimHitChance and Options.SilentAimHitChance.Value or 100
+        if CalculateChance(hitChanceVal) then
+            local HitPart = silentTargetPart
+            if HitPart then
+                local selectedMethod = Options.SilentAimMethod and Options.SilentAimMethod.Value
+                if Method == selectedMethod or (selectedMethod == "FindPartOnRay" and Method == "findPartOnRay") then
+                    local function computeRay(origin)
+                        local adjustedOrigin = origin
+                        if Settings.SilentAim.BulletTP then
+                            adjustedOrigin = (HitPart.CFrame * CFrame.new(0, 0, 1)).Position
+                        end
+                        local multiplier = Settings.SilentAim.MultiplyUnitBy or 1000
+                        local direction = (HitPart.Position - adjustedOrigin).Unit * multiplier
+                        return adjustedOrigin, direction
+                    end
+
+                    if Method == "FindPartOnRayWithIgnoreList" then
+                        if ValidateArguments(Args, ExpectedArguments.FindPartOnRayWithIgnoreList) then
+                            local Origin, Direction = computeRay(Args[1].Origin)
+                            Args[1] = Ray.new(Origin, Direction)
+                            return oldNamecall(self, unpack(Args))
+                        end
+                    elseif Method == "FindPartOnRayWithWhitelist" then
+                        if ValidateArguments(Args, ExpectedArguments.FindPartOnRayWithWhitelist) then
+                            local Origin, Direction = computeRay(Args[1].Origin)
+                            Args[1] = Ray.new(Origin, Direction)
+                            return oldNamecall(self, unpack(Args))
+                        end
+                    elseif Method == "FindPartOnRay" or Method == "findPartOnRay" then
+                        if ValidateArguments(Args, ExpectedArguments.FindPartOnRay) then
+                            local Origin, Direction = computeRay(Args[1].Origin)
+                            Args[1] = Ray.new(Origin, Direction)
+                            return oldNamecall(self, unpack(Args))
+                        end
+                    elseif Method == "Raycast" and self == Workspace then
+                        if ValidateArguments(Args, ExpectedArguments.Raycast) then
+                            local Origin, Direction = computeRay(Args[1])
+                            Args[1], Args[2] = Origin, Direction
+                            return oldNamecall(self, unpack(Args))
+                        end
+                    elseif Method == "ViewportPointToRay" then
+                        if ValidateArguments(Args, ExpectedArguments.ViewportPointToRay) then
+                            local Origin = Camera.CFrame.Position
+                            local NewOrigin, Direction = computeRay(Origin)
+                            return Ray.new(NewOrigin, Direction)
+                        end
+                    elseif Method == "ScreenPointToRay" then
+                        if ValidateArguments(Args, ExpectedArguments.ScreenPointToRay) then
+                            local Origin = Camera.CFrame.Position
+                            local NewOrigin, Direction = computeRay(Origin)
+                            return Ray.new(NewOrigin, Direction)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return oldNamecall(self, ...)
+end))
 
 -- CFRAME DESYNC ENGINE VARIABLES
 local RealCFrame = nil
@@ -1766,6 +2034,26 @@ table.insert(Connections, RunService.RenderStepped:Connect(function(deltaTime)
 
     if Settings.FOV.Enabled or Settings.FOV.Filled then
         Settings.FOV.Position = UserInputService:GetMouseLocation()
+    end
+    if Settings.SilentAim.FOV.Enabled or Settings.SilentAim.FOV.Filled then
+        Settings.SilentAim.FOV.Position = UserInputService:GetMouseLocation()
+    end
+
+    -- Silent Aim target updates
+    local silentAimEnabled = Toggles.SilentAim and Toggles.SilentAim.Value
+    local silentKeyActive = Options.SilentAimKeybind and Options.SilentAimKeybind:GetState()
+    local isSilentActive = silentAimEnabled and (silentKeyActive or Options.SilentAimKeybind.Value == 'None')
+
+    if isSilentActive then
+        if Toggles.StickyAim and Toggles.StickyAim.Value then
+            if not IsSilentTargetValid(silentTarget, silentTargetPart) then
+                silentTarget, silentTargetPart = GetClosestSilentTarget()
+            end
+        else
+            silentTarget, silentTargetPart = GetClosestSilentTarget()
+        end
+    else
+        silentTarget, silentTargetPart = nil, nil
     end
 
     -- Visuals render updates
